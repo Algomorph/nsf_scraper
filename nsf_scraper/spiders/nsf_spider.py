@@ -70,6 +70,9 @@ class NsfSpider(scrapy.Spider):
         #get the part where it says "Showing results x through y of z"
         res_string = response.xpath("body/table/tr/td/table/tr/td/table/tr/td[@valign='top'][not(@class)]/text()")[0].extract()
         total_solicitation_count = int(re.findall(r'\d+',res_string)[2])
+        #we assume here that it will remain at 20 results per page.
+        #if that starts changing, then figure out how to pull this number from 
+        #the first listing page.
         solicitations_per_page = 20
         list_page_count = total_solicitation_count / solicitations_per_page
         if total_solicitation_count % solicitations_per_page != 0:
@@ -79,12 +82,12 @@ class NsfSpider(scrapy.Spider):
                          "?fundingQueryText=&nsfOrgs=allorg&fundingType=0&pubStatus=ACTIVE&advForm=true&pg=")
         list_urls = [list_base_url + str(pagenum) for pagenum in range(1,list_page_count+1)]
         #for list_url in list_urls:
-        for list_url in list_urls[0:1]:#DEBUG (remove range for release)
+        for list_url in list_urls[0:5]:#DEBUG LINE (remove the range for release)
             yield scrapy.http.FormRequest(url=list_url,
                                           callback=self.parse_nsf_solicitation_list,
                                           method="GET")
     
-    got_article = False #DEBUG
+    #got_article = False #DEBUG LINE
     def parse_nsf_solicitation_list(self,response):
         '''
         Parse the actual list page by generating queries that follow each
@@ -97,7 +100,8 @@ class NsfSpider(scrapy.Spider):
         for link in sol_links:
             pims_id = int(re.search(r'\d+$',link).group(0))
             if(pims_id > 0):
-                if(not self.db.contains(pims_id) and not NsfSpider.got_article):
+                #if(not self.db.contains(pims_id) and not NsfSpider.got_article): #DEBUG LINE
+                if(not self.db.contains(pims_id)):
                     yield scrapy.Request(NsfSpider.nsf_index + link, 
                                          callback=self.parse_nsf_solicitation_page, method="GET")
                     NsfSpider.got_article = True
@@ -112,7 +116,7 @@ class NsfSpider(scrapy.Spider):
         doc_page_link = None
         for link in all_links:
             #grantsgovguide is the only external ods link we expect on these pages
-            if "ods_key" in link and not "grantsgovguide" in link:
+            if "ods_key=" in link and "pims_id=" in link and not "grantsgovguide" in link:
                 doc_page_link = link.strip()
                 break
         if doc_page_link is None:
@@ -147,13 +151,18 @@ class NsfSpider(scrapy.Spider):
         All we need here is to get to the HTML representation of the published 
         solicitation
         '''
+        check_due_date = False
         #date the solicitation was posted
         posted_date_str = re.findall(r'Date: (.*)',response.body, re.IGNORECASE)[0].strip()
-        posted_date = datetime.datetime.strptime(posted_date_str,"%m/%d/%Y")
+        try:
+            posted_date = datetime.datetime.strptime(posted_date_str,"%m/%d/%Y")
+        except ValueError:
+            #sometimes, they use a two-digit year instead of a four-digit one
+            posted_date = datetime.datetime.strptime(posted_date_str,"%m/%d/%y")
         expanded_title = re.findall(r'Title:\s*([^\n]*\n.*)',response.body, re.IGNORECASE)[0]
         
-        #solicitation code
-        solicitation_codes = re.findall(r'^(?:\[\d\])?Program Solicitation\s+(.*)',response.body, re.MULTILINE)
+        #solicitation code (sometimes they use "Announcement" instead of "Solicitation")
+        solicitation_codes = re.findall(r'^(?:\[\d\])?Program (?:Solicitation|Announcement)\s+(.*)',response.body, re.MULTILINE)
         if(len(solicitation_codes) > 0):
             solictation_code = solicitation_codes[0]
         else:
@@ -173,15 +182,34 @@ class NsfSpider(scrapy.Spider):
             letter_due_date = datetime.datetime.strptime(letter_due_dates[0].strip(), "%B %d, %Y")
         else:
             letter_due_date = None
-            
-        proposal_due_dates = re.findall(r'Full Proposal Deadline\(s\)[^:]*:(?:\r?\n)+\s*(.*)',response.body)
+        
+        if("Submission Window Date" in response.body):
+            #sometimes they give a window for submission instead of a single date
+            proposal_due_dates = re.findall(r'Submission Window Date\(s\)[^:]*:(?:\r?\n)+[^-]*-\s*(.*)',response.body)
+        else:    
+            proposal_due_dates = re.findall(r'Full Proposal Deadline\(s\)[^:]*:(?:\r?\n)+\s*(.*)',response.body)
+        
+        proposal_due_date = None
         if(len(proposal_due_dates) > 0):
-            proposal_due_date = datetime.datetime.strptime(proposal_due_dates[0].strip(), "%B %d, %Y")
+            prop_due_str = proposal_due_dates[0].strip()
+            try:
+                proposal_due_date = datetime.datetime.strptime(prop_due_str, "%B %d, %Y")
+            except ValueError:
+                if("Any" in prop_due_str):
+                    #accepted continuously
+                    proposal_due_date = None
+                else:
+                    raise RuntimeError("Could not parse proposal deadline for solicitation " 
+                                       + solictation_code + ". Got string: " + proposal_due_date )
         else:
-            raise RuntimeError("Could not find proposal deadline for solicitation " + solictation_code)
+            if("Full Proposal Target Date" in response.body):
+                check_due_date = True
+                proposal_due_date = None
+            else:
+                raise RuntimeError("Could not find proposal deadline for solicitation " + solictation_code)
         
         #on to get the limits on proposal numbers
-        limit_on_org_sr = re.search(r'Limit on Number of Proposals per Organization[^:]*:(?:\r?\n)+\s*',response.body)
+        limit_on_org_sr = re.search(r'Limit on Number of Proposals per Organization[^:]*:(?:(?:\r?\n)+\s*|\s*(?=\d))',response.body)
         limit_on_PI_sr = re.search(r'Limit on Number of Proposals per PI',response.body)
         limit_org_text = re.sub('\n\n?\s*', " ", response.body[limit_on_org_sr.end():limit_on_PI_sr.start()])
         limit_re = re.compile("none|one|two|three|four|five|six|seven|eight|nine|ten|[0-9]|10", re.IGNORECASE)
@@ -214,6 +242,7 @@ class NsfSpider(scrapy.Spider):
         sol["has_limit_per_org"] = has_limit_per_org
         sol["filtered"] = False
         sol["url"] = response.url.replace(".txt",".htm")
+        sol["check_due_date"] = check_due_date
         yield sol
         
     

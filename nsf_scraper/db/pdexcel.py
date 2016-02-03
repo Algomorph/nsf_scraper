@@ -68,8 +68,8 @@ class PandasExcelHelper(object):
         df["new"] = pd.Series([(1 if ix in self.added_items else 0 ) 
                                       for ix in df.index ],
                                       index=df.index)
-        #df["dd"] = [datetime.strptime(dt, "%m/%d/%Y") for dt in df["proposal_due_date"].values]
-        report_df = self.sol_df[(df["proposal_due_date"] >= today)]
+        
+        report_df = df[(df["proposal_due_date"] >= today)]
         
         writer = ExcelWriter(self.report_filename)
         report_df.to_excel(writer,self.sol_sheet_name,merge_cells=False)

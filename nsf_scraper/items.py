@@ -18,9 +18,11 @@ class NsfSolicitation(scrapy.Item):
     posted_date = scrapy.Field()
     letter_due_date = scrapy.Field(serializer=str)
     proposal_due_date = scrapy.Field(serializer=str)
+    check_due_date = scrapy.Field(serializer=bool)
     limit_per_org_text = scrapy.Field(serializer=str)
     suggested_limit_per_org = scrapy.Field(serializer=int)
     has_limit_per_org = scrapy.Field(serializer=bool)
     filtered = scrapy.Field(serializer=bool)
     url = scrapy.Field(serializer=str)
+    
         

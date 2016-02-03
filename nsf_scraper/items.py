@@ -22,7 +22,10 @@ class NsfSolicitation(scrapy.Item):
     limit_per_org_text = scrapy.Field(serializer=str)
     suggested_limit_per_org = scrapy.Field(serializer=int)
     has_limit_per_org = scrapy.Field(serializer=bool)
+    check_letter_of_intent = scrapy.Field(serializer=bool)
     filtered = scrapy.Field(serializer=bool)
     url = scrapy.Field(serializer=str)
+    check_limit_per_org = scrapy.Field(seializer=bool)
+    check_post_date = scrapy.Field(serielizer=bool)
     
         

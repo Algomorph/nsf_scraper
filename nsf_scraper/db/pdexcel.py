@@ -54,6 +54,9 @@ class PandasExcelHelper(object):
         self.usaved_sol_counter = 0
         self.sol_counter = 0
         self.added_items = set()
+        self.solicitation_numbers = set()
+        for sn in self.sol_df["solicitation_number"].values:
+            self.solicitation_numbers.add(sn)
         self.index_column = index_column
         
     
@@ -97,6 +100,8 @@ class PandasExcelHelper(object):
                 
         
         item_series = pd.Series(name=key,data=item_body)
+        if(item["solicitation_number"] is not None):
+            self.solicitation_numbers.add(item["solicitation_number"])
         
         if(filtered):
             self.filtered_df.loc[key] = item_series
@@ -109,6 +114,27 @@ class PandasExcelHelper(object):
         else:
             self.sol_counter = 0
             self.save_all()
+            
+    def retrieve_item_by_pims(self, pims_id):
+        '''
+        Grab the item with the matching pims_id
+        '''
+        if(pims_id in self.sol_df.index):
+            return self.sol_df.ix[pims_id]
+        if(pims_id in self.filtered_df.index):
+            return self.filtered_df[pims_id]
+        return None
+    
+    def retrieve_item_by_sol_number(self, sol_number):
+        '''
+        Grab the first item you find with the matching solicitation number,
+        if any
+        '''
+        window = self.sol_df[self.sol_df['solicitation_number']==sol_number]
+        if(len(window) > 0):
+            return window.iloc[0]
+        else:
+            return None
 
         
     def save_all(self):
@@ -125,8 +151,14 @@ class PandasExcelHelper(object):
         writer.close()
         print "========  Done saving.  ========\n"
         
-    def contains(self,key):
+    def contains_pims(self,pims_id):
         '''
-        Checks whether the key is present in either filtered or the unfiltered dataframe
+        Checks whether the pims_id is present in either filtered or the unfiltered dataframe
         '''
-        return key in self.sol_df.index or key in self.filtered_df.index
+        return pims_id in self.sol_df.index or pims_id in self.filtered_df.index
+    
+    def contains_sol_number(self,sol_number):
+        '''
+        Checks whether the solicitation number is present in either filtered or the unfiltered dataframe
+        '''
+        return sol_number in self.solicitation_numbers

@@ -19,6 +19,7 @@ NEWSPIDER_MODULE = 'nsf_scraper.spiders'
 ROBOTSTXT_OBEY = False
 RANDOMIZE_DOWNLOAD_DELAY = True
 DOWNLOAD_DELAY = 5.0
+DUPEFILTER_DEBUG = True
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 # !!! ATTENTION: PLEASE REPLACE WITH YOUR OWN WEBSITE IF YOU ARE GOING TO USE USER_AGENT!

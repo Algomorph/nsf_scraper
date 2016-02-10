@@ -15,14 +15,19 @@ class NsfSolicitation(scrapy.Item):
     title = scrapy.Field(serializer=str)
     solicitation_number = scrapy.Field(serializer=int)
     pims_id = scrapy.Field(serializer=int)
-    posted_date = scrapy.Field()
+    
     letter_due_date = scrapy.Field(serializer=str)
     proposal_due_date = scrapy.Field(serializer=str)
+    annual = scrapy.Field(serializer=bool)
+    annual_text = scrapy.Field(serializer=str)
+    
+    posted_date = scrapy.Field()
     limit_per_org_text = scrapy.Field(serializer=str)
     suggested_limit_per_org = scrapy.Field(serializer=int)
     has_limit_per_org = scrapy.Field(serializer=bool)
     filtered = scrapy.Field(serializer=bool)
     url = scrapy.Field(serializer=str)
+    
     check_letter_of_intent = scrapy.Field(serializer=bool)
     check_due_date = scrapy.Field(serializer=bool)
     check_limit_per_org = scrapy.Field(seializer=bool)

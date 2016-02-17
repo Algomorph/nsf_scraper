@@ -68,11 +68,11 @@ class PandasExcelHelper(object):
         print "\n\n========  Generating report...  ========"
         today = datetime.today()
         df = self.sol_df.copy()
-        df["new"] = pd.Series([(1 if ix in self.added_items else 0 ) 
+        df["new"] = pd.Series([(True if ix in self.added_items else False ) 
                                       for ix in df.index ],
                                       index=df.index)
         
-        report_df = df[(df["proposal_due_date"] >= today)]
+        report_df = df[(df["proposal_due_date"] >= today) | (df["proposal_due_date"] == None)]
         
         writer = ExcelWriter(self.report_filename)
         report_df.to_excel(writer,self.sol_sheet_name,merge_cells=False)
@@ -100,7 +100,7 @@ class PandasExcelHelper(object):
                 
         
         item_series = pd.Series(name=key,data=item_body)
-        if(item["solicitation_number"] is not None):
+        if("solicitation_number" in item):
             self.solicitation_numbers.add(item["solicitation_number"])
         
         if(filtered):
@@ -130,11 +130,13 @@ class PandasExcelHelper(object):
         Grab the first item you find with the matching solicitation number,
         if any
         '''
+        window = self.sol_df[self.sol_df['solicitation_number']==sol_number & self.sol_df['check_limit_per_org']==False]
+        if(len(window) > 0):
+            return window.iloc[0]
         window = self.sol_df[self.sol_df['solicitation_number']==sol_number]
         if(len(window) > 0):
             return window.iloc[0]
-        else:
-            return None
+        return None
 
         
     def save_all(self):
@@ -149,7 +151,7 @@ class PandasExcelHelper(object):
         self.filtered_df.to_excel(writer,self.filtered_sheet_name,merge_cells=False)
         writer.save()
         writer.close()
-        print "========  Done saving.  ========\n"
+        print "========  Done saving.  ==============\n"
         
     def contains_pims(self,pims_id):
         '''

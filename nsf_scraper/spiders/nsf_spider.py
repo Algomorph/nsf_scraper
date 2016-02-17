@@ -85,10 +85,9 @@ class NsfSpider(scrapy.Spider):
         list_base_url = (NsfSpider.nsf_base_url +
                          "?fundingQueryText=&nsfOrgs=allorg&fundingType=0&pubStatus=ACTIVE&advForm=true&pg=")
         list_urls = [list_base_url + str(pagenum) for pagenum in range(1,list_page_count+1)]
-        #for list_url in list_urls:
-#         for list_url in [list_urls[7],  list_urls[9],  list_urls[10], list_urls[12], #DEBUG LINE
-#                          list_urls[14], list_urls[15], list_urls[16], list_urls[18]]:#DEBUG LINE
-        for list_url in list_urls[0:1]:#DEBUG_LINE
+        
+        for list_url in list_urls:
+        #for list_url in list_urls[0:3]:#DEBUG_LINE
             yield scrapy.http.FormRequest(url=list_url,
                                           callback=self.parse_nsf_solicitation_list,
                                           method="GET")
@@ -113,6 +112,7 @@ class NsfSpider(scrapy.Spider):
                     NsfSpider.got_article = True
                 else:
                     print("Document with pims_id {0:d} is already in database. SKIPPING.".format(pims_id))
+        print("\n=================DONE PARSING LISTING PAGE {0:d}==============\n".format(page_id))
                     
     def try_parse_due_date(self, date_string, url, due_date_description = "full proposal due date"):
         try:
@@ -131,9 +131,11 @@ class NsfSpider(scrapy.Spider):
         sol = NsfSolicitation()
         sol["title"]=title
         sol["proposal_due_date"]=proposal_due_date
+        sol["check_due_date"]=False
         sol["annual"]=annual
         sol["annual_text"]=annual_text
         sol["letter_due_date"]=letter_due_date
+        sol["check_letter_of_intent"]=False
         sol["filtered"]=False
         return sol
     
@@ -181,12 +183,18 @@ class NsfSpider(scrapy.Spider):
                     for line in stripped_lines:
                         if(re.search(r'Annually',line,re.IGNORECASE) != None):
                             annual_text = line
-                full_due_date_text = \
-                re.search(r"(?:Full\s*(?:Center\s*)?Proposal|Application)"+
+                            
+                full_due_date_match = re.search(r"(?:Full\s*(?:Center\s*)?Proposal|Application)"+
                           "\s*(?:Deadline|Target\s*Date)[^:]*:\s*(.*)",
-                          date_text, re.MULTILINE).group(1)
-                proposal_due_date = self.try_parse_due_date(full_due_date_text, 
-                                                            response.url, "full proposal due date")
+                          date_text, re.MULTILINE)
+                if(full_due_date_match is not None):
+                    full_due_date_text = full_due_date_match.group(1)
+                    proposal_due_date = self.try_parse_due_date(full_due_date_text, 
+                                                                response.url, "full proposal due date")
+                else:
+                    proposal_due_date = None
+                    lines = response.xpath("body/table/tr/td/table/tr/td/h2/text()[contains(.,'DUE DATES')]/../following-sibling::p/text()").extract()[:4]
+                    proposal_due_date_text = re.sub(r'\r\n\s*',' ',"\n".join(lines))
                 intent_letter_match = \
                 re.search(r"Letter of Intent (?:Due|Deadline) Date[^:]*:"+
                           "(?:\r?\n)?\s*(.*)", date_text, re.MULTILINE)
@@ -205,12 +213,17 @@ class NsfSpider(scrapy.Spider):
             for link in all_links:
                 #grantsgovguide is the only external ods link we expect on these pages
                 if("ods_key=" in link and "pims_id=" in link
-                   and not "grantsgovguide" in link and not link in related_links):
+                   and not "grantsgovguide" in link and not "ods_key=gpg" in link 
+                   and not link in related_links):
                     doc_page_link = link.strip()
                     break
                 
             sol = self.pregenerate_solicitation(title, proposal_due_date, annual,
                                                  annual_text, letter_due_date)
+            if(has_due_date and proposal_due_date is None):
+                #fill in info for manual checking
+                sol["check_due_date"] = True
+                sol["proposal_due_date_text"] = proposal_due_date_text
             pims_id = int(re.search(r'\d+$',response.url).group(0))
             sol["pims_id"] = pims_id
             sol["url"]=response.url
@@ -219,6 +232,7 @@ class NsfSpider(scrapy.Spider):
                 #this is not limited submission, filter it out
                 sol["filtered"]=True
                 yield sol
+                print("======YIELDED A (FILTERED) NO-DOC SOLICITATION, PIMS {0:d}======\n".format(pims_id))
             else:
                 sol_number = int(re.search(r'ods_key=nsf(\d+)',doc_page_link).group(1))
                 sol["solicitation_number"] = sol_number
@@ -227,7 +241,7 @@ class NsfSpider(scrapy.Spider):
                     if(self.db.contains_sol_number(sol_number)):
                         #must have already followed that doc link in earlier sessions 
                         #or saved to the db, yield the solicitation
-                        db_sol = self.db.retrieve_item_by_sol_number(sol)
+                        db_sol = self.db.retrieve_item_by_sol_number(sol_number)
                         #fill in the missing relevant items from the already existing data entry
                         sol["limit_per_org_text"] = db_sol["limit_per_org_text"]
                         sol["has_limit_per_org"] = db_sol["has_limit_per_org"]
@@ -263,21 +277,54 @@ class NsfSpider(scrapy.Spider):
             yield scrapy.Request(url=full_doc_url, callback=self.parse_nsf_solicitation, 
                                  method="GET")
         except:
+            #if we got here, that means we could not find the proper text document URL
             try:
-                sol = NsfSolicitation()
-                title = response.xpath("//span[@class='pageheadline']/text()").extract()[0].strip()
-                #get rid of the extra returns and spaces in title
-                title = re.sub("\s*\n\s*|\s*\r\s*", " ", title.strip())
-                sol["pims_id"]=int(re.search(r'pims_id=(\d+)',response.url).group(1))
-                sol["solicitation_number"]=int(re.search(r'ods_key=nsf(\d+)',response.url).group(1))
-                sol["title"]=title
-                sol["filtered"]=False
-                sol["url"]=response.url
-                sol["check_due_date"] = True
-                sol["check_letter_of_intent"] = True
-                sol["check_limit_per_org"] = True
-                sol["check_post_date"] = True
-                yield sol
+                sol_number = int(re.search(r'ods_key=nsf(\d+)',response.url).group(1))
+                pims_id = int(re.search(r'pims_id=(\d+)',response.url).group(1))
+                yielded = False
+                print("\n======NO DOCUMENT FOUND FOR SOLICITATION {0:d} =====".format(sol_number))
+                print("======CHECKING AGAINST LISTING-PAGE DATA & DATABASE ==".format(sol_number))
+                if(sol_number in self.unfinished_solicitations_by_sn):
+                    for sol in self.unfinished_solicitations_by_sn[sol_number]:
+                        sol["check_limit_per_org"] = True
+                        if(not "posted_date" in sol or sol["posted_date"] is None):
+                            sol["check_post_date"] = True
+                        if(self.db.contains_sol_number(sol_number)):
+                            #fill limit from org info from database
+                            db_sol = self.db.retrieve_item_by_sol_number(sol_number)
+                            sol["limit_per_org_text"] = db_sol["limit_per_org_text"]
+                            sol["has_limit_per_org"] = db_sol["has_limit_per_org"]
+                            sol["suggested_limit_per_org"] = db_sol["suggested_limit_per_org"]
+                            sol["check_limit_per_org"] = db_sol["check_limit_per_org"]
+                        yield sol
+                        if(sol["pims_id"] == pims_id):
+                            #check if it's the same actual posting as this one
+                            yielded = True
+                        
+                if(not yielded):
+                    sol = NsfSolicitation()
+                    title = response.xpath("//span[@class='pageheadline']/text()").extract()[0].strip()
+                    #get rid of the extra returns and spaces in title
+                    title = re.sub("\s*\n\s*|\s*\r\s*", " ", title.strip())
+                    sol["pims_id"]=pims_id
+                    sol["solicitation_number"]=sol_number
+                    sol["title"]=title
+                    sol["filtered"]=False
+                    sol["url"]=response.url
+                    sol["check_due_date"] = True
+                    sol["check_letter_of_intent"] = True
+                    sol["check_limit_per_org"] = True
+                    sol["check_post_date"] = True
+                    if(self.db.contains_sol_number(sol_number)):
+                        #fill limit from org info & title from database
+                        db_sol = self.db.retrieve_item_by_sol_number(sol_number)
+                        sol["title"]=db_sol["title"]
+                        sol["limit_per_org_text"] = db_sol["limit_per_org_text"]
+                        sol["has_limit_per_org"] = db_sol["has_limit_per_org"]
+                        sol["suggested_limit_per_org"] = db_sol["suggested_limit_per_org"]
+                        sol["check_limit_per_org"] = db_sol["check_limit_per_org"]
+                    yield sol
+                print("\n======YIELDED AVAILABLE INFO FOR {0:d} FROM OTHER SOURCES=====".format(sol_number))
             except:
                 tb = traceback.format_exc()
                 print(Fore.RED  + Style.BRIGHT + tb)#@UndefinedVariable
@@ -358,7 +405,7 @@ class NsfSpider(scrapy.Spider):
                 else:    
                     proposal_due_dates = \
                     re.findall(r'(?:Full (?:Center )?Proposal|Application)'+
-                               '\s*Deadline\(s\)[^:]*:(?:\r?\n)+\s*(.*)',response.body)
+                               '\s*(?:Deadline|Target Date)\(s\)[^:]*:(?:\r?\n)+\s*(.*)',response.body)
                 proposal_due_date = None
                 check_due_date = False
                 if(len(proposal_due_dates) > 0):
@@ -367,11 +414,9 @@ class NsfSpider(scrapy.Spider):
                                                                 response.url,
                                                                 "full proposal due date")
                 else:
-                    if("Full Proposal Target Date" in response.body):
-                        check_due_date = True
-                        proposal_due_date = None
-                    else:
-                        raise RuntimeError("Could not find proposal deadline for solicitation " + solictation_code)
+                    check_due_date = True
+                    #else:
+                    #    raise RuntimeError("Could not find proposal deadline for solicitation " + solictation_code)
                 sol["proposal_due_date"] = proposal_due_date
                 sol["check_due_date"] = check_due_date
                 
@@ -427,15 +472,19 @@ class NsfSpider(scrapy.Spider):
             if(len(repost_list) > 1):
                 repost_list = repost_list[1:]
                 for repost_sol in repost_list:
-                    print("=======ADDING REPOST=====================================\n")
+                    print("=======ADDING REPLICATED SOLICIATION====================\n")
                     repost_sol["limit_per_org_text"] = limit_org_text
                     repost_sol["suggested_limit_per_org"] = suggested_org_limit
                     repost_sol["has_limit_per_org"] = has_limit_per_org
                     repost_sol["check_limit_per_org"] = check_limit_per_org
-                    if(repost_sol["proposal_due_date"] is None):
+                    if(not "posted_date" in repost_sol 
+                       or repost_sol["posted_date"] is None):
+                        repost_sol["check_post_date"] = True
+                    if(not "proposal_due_date" in repost_sol 
+                       or repost_sol["proposal_due_date"] is None):
                         repost_sol["check_due_date"] = True
                     #assuming here no repost will have letter of intent
-                    print("=======REPOST ADDED======================================\n")
+                    print("=======REPLICATED SOLICIATION ADDED=====================\n")
 
             #clear out the unfinished array for it
             del self.unfinished_solicitations_by_sn[solicitation_number]

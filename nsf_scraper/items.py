@@ -18,6 +18,7 @@ class NsfSolicitation(scrapy.Item):
     
     letter_due_date = scrapy.Field(serializer=str)
     proposal_due_date = scrapy.Field(serializer=str)
+    proposal_due_date_text = scrapy.Field(serializer=str)
     annual = scrapy.Field(serializer=bool)
     annual_text = scrapy.Field(serializer=str)
     

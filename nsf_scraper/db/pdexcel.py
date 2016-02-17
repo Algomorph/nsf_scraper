@@ -130,7 +130,7 @@ class PandasExcelHelper(object):
         Grab the first item you find with the matching solicitation number,
         if any
         '''
-        window = self.sol_df[self.sol_df['solicitation_number']==sol_number & self.sol_df['check_limit_per_org']==False]
+        window = self.sol_df[(self.sol_df['solicitation_number']==sol_number) & (self.sol_df['check_limit_per_org']==False)]
         if(len(window) > 0):
             return window.iloc[0]
         window = self.sol_df[self.sol_df['solicitation_number']==sol_number]
